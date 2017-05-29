@@ -63,7 +63,7 @@ def scrape():
     
     # Probably want to have a fixed list of subreddits instead of this, as the 
     # list of most popular subreddits will change over time.
-    subs = subreddits(limit=10)
+    subs = subreddits(limit=100)
     
     logging.info('Fetching moderators for {} subs'.format(len(subs)))
     mods = moderators(subs) 
@@ -79,13 +79,16 @@ def scrape():
 def load():
     paths = []
     for dirname, _, filenames in os.walk(OUTPUT_DIR):
-        paths.extend([os.path.join(dirname, fn) for fn in filenames])
+        paths.extend([os.path.join(dirname, fn) for fn in filenames if fn.endswith('pkl')])
     paths = sorted(paths)
     
     results = []
     for p in paths:
-        df = pd.read_pickle(p)
-        results.append(df)
+        try:
+            df = pd.read_pickle(p)
+            results.append(df)
+        except Exception as e:
+            logging.warn('Couldnt load {} due to exception {}'.format(p, e))
     results = pd.concat(results)
     
     results['permission'] = results['permission'].fillna(False)
