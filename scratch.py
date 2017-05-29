@@ -88,6 +88,15 @@ def load():
         results.append(df)
     results = pd.concat(results)
     
+    results['permission'] = results['permission'].fillna(False)
+    
+    results = (results
+                   .reset_index(level=1, drop=True)
+                   .set_index([('detail', 'name'), 
+                               ('meta', 'start_time')], append=True)
+                   .sort_index(0))
+    results.index.names = ['' for _ in results.index.names]
+    
     return results
     
 def _configure_logging():
