@@ -19,6 +19,8 @@ USER_AGENT = 'test script for /u/bluecoffee'
 OUTPUT_DIR = 'output'
 LOGGING_DIR = 'logging/logs.txt'
 
+LIMIT = 1000
+
 def api():
     if not hasattr(api, '_cache'):
         with open('credentials.json', 'rb') as f:
@@ -63,7 +65,7 @@ def scrape():
     
     # Probably want to have a fixed list of subreddits instead of this, as the 
     # list of most popular subreddits will change over time.
-    subs = subreddits(limit=100)
+    subs = subreddits(limit=LIMIT)
     
     logging.info('Fetching moderators for {} subs'.format(len(subs)))
     mods = moderators(subs) 
