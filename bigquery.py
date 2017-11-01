@@ -14,20 +14,19 @@
  - SQL docs: https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax
  - Parameterized query docs: https://cloud.google.com/bigquery/docs/parameterized-queries
  - Reddit table schema: https://bigquery.cloud.google.com/table/fh-bigquery:reddit_comments.all
+
+ - Install spacy
+ - Download the english model: `python -m spacy download en`
 """
 
+import scipy as sp
+import spacy
 import pandas as pd
+from tqdm import tqdm
 from google.cloud import bigquery
 
 PROJECT = 'reddit-network'
 CREDENTIALS = 'reddit-network-f00ede7e73d0.json'
-
-QUERY = """
-select  body, author, created_utc, parent_id, subreddit, score
-from `fh-bigquery.reddit_comments.{}`
-where (subreddit = @subreddit)
-limit @lim
-"""
 
 def client():
     return bigquery.Client.from_service_account_json(CREDENTIALS, project=PROJECT)
@@ -35,18 +34,11 @@ def client():
 def comments_table(name='2005'):
     return client().dataset('reddit_comments').table('all')
 
-def query(table, subreddit, limit=100, name='default', max_bytes=1e9):
-    config = bigquery.QueryJobConfig()
-    config.query_parameters = (bigquery.ScalarQueryParameter('subreddit', 'STRING', subreddit),
-                               bigquery.ScalarQueryParameter('lim', 'INT64', limit))
+def job(query, config, max_bytes=1e9):
     config.use_legacy_sql = False
     config.maximum_bytes_billed = int(max_bytes)
     
-    job = client().query(
-                query=QUERY.format(table),
-                job_config=config,
-                job_id_prefix=name)
-    
+    job = client().query(query=query, job_config=config)
     iterator = job.result()
 
     rows = []
@@ -54,9 +46,53 @@ def query(table, subreddit, limit=100, name='default', max_bytes=1e9):
         rows.append(row.values())
         
     columns = [c.name for c in iterator.schema]
-    result = pd.DataFrame(rows, None, columns)
+    return pd.DataFrame(rows, None, columns)
     
-    return result
 
+def all_comments(table, subreddit, **kwargs):
+    query = """select body, author, created_utc, parent_id, subreddit, score
+               from `fh-bigquery.reddit_comments.{}`
+               where (subreddit = @subreddit)
+               """.format(table)
+    
+    config = bigquery.QueryJobConfig()
+    config.query_parameters = (bigquery.ScalarQueryParameter('subreddit', 'STRING', subreddit))
+    
+    return job(query, config, **kwargs)
+
+def sample_comments(table, size=10, **kwargs):
+    query = """select subreddit, array_agg(struct(body, id) order by rand() desc limit @size) as agg
+               from `fh-bigquery.reddit_comments.{}`
+               group by subreddit""".format(table)
+        
+    config = bigquery.QueryJobConfig()
+    config.query_parameters = (bigquery.ScalarQueryParameter('size', 'INT64', size),)
+    
+    result = job(query, config, **kwargs)
+    
+    # This could definitely be done faster :/
+    samples = pd.concat(result.set_index('subreddit')['agg'].apply(pd.DataFrame).to_dict())
+    
+    return samples
+
+def lemmatize(samples, nlp):
+    #TODO: This could be sped up with nlp.pipe
+    strings = samples.body.add(' | ').groupby(level=0).sum()
+    
+    indices = []
+    for i, s in enumerate(tqdm(strings)):
+        indices.extend([(i, t.lemma) for t in nlp(s)])
+    indices = sp.array(indices)
+    
+    rows = indices[:, 0]
+    cols = indices[:, 1]
+    vals = sp.ones_like(rows)
+    indicators = sp.sparse.csc_matrix((vals, (rows, cols)), (len(samples), len(nlp.vocab.strings)+1))
+    
+    return strings.index.tolist(), indicators
+    
 def example():
-    return query('2005', 'reddit.com')
+    nlp = spacy.load('en')
+    
+    samples = sample_comments('2009')
+    subreddits, indicators = lemmatize(samples, nlp)
