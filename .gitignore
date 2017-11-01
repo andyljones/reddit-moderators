@@ -1,8 +1,6 @@
+*.ini
 *.json
-*.pyc
-credentials.json
-logging
-output
-
 *.txt
 *.pkl
+*.pyc
+*.txt
