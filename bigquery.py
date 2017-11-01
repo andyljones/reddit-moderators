@@ -22,20 +22,28 @@
 import scipy as sp
 import spacy
 import pandas as pd
+import pickle
+import gzip
 from tqdm import tqdm
 from google.cloud import bigquery
 from logging import getLogger
 from concurrent.futures import TimeoutError
-import time
+import sys
+import os
+from pathlib import Path
 
 PROJECT = 'reddit-network'
 CREDENTIALS = 'reddit-network-f00ede7e73d0.json'
 
+CACHE = 'cache'
+
 def client():
     return bigquery.Client.from_service_account_json(CREDENTIALS, project=PROJECT)
 
-def comments_table(name='2005'):
-    return client().dataset('reddit_comments').table('all')
+def tables():
+    c = client()
+    ds = c.dataset('reddit_comments', 'fh-bigquery')
+    return [t.table_id for t in c.list_dataset_tables(ds)]
 
 def job(query, config=None, max_bytes=1e9):
     config = config or bigquery.QueryJobConfig()
@@ -117,7 +125,8 @@ def lemmatize(samples, nlp):
     vals = sp.ones_like(rows)
     indicators = sp.sparse.csc_matrix((vals, (rows, cols)), (len(samples), len(nlp.vocab.strings)+1))
     
-    return strings.index.tolist(), indicators
+    return {'subreddits': strings.index.tolist(), 
+            'indicators': indicators}
     
 def incidence_matrices(relation):
     results = {}
@@ -143,11 +152,41 @@ def incidence_matrices(relation):
         
     return results
 
+def save(obj, name, subfolder):
+    compressed = gzip.compress(pickle.dumps(obj), 1)
+    
+    print('Saving {:.1f}MB under "{}"'.format(len(compressed)/1e6, name))
+    path = Path('.') / CACHE / subfolder / (name + '.gz')
+    path.parent.mkdir(exist_ok=True, parents=True)
+    path.write_bytes(compressed)
+    
+def load(name, subfolder):
+    path = Path('.') / CACHE / subfolder / (name + '.gz')
+    
+    return pickle.loads(gzip.decompress(path.read_bytes()))
+    
+def save_incidence(incidence, name):
+    save(incidence, name, 'incidence')
+
+def load_incidence(name):
+    return load(name, 'incidence')
+
+def save_lemmatized(lemmatized, name):
+    save(lemmatized, name, 'lemmatized')
+    
+def load_lemmatized(name):
+    return load(name, 'lemmatized')
+
 def example():
     nlp = spacy.load('en')
     
-    samples = sample_comments('2005')
-    subreddits, indicators = lemmatize(samples, nlp)
+    names = tables()    
+    name = '2007'
     
-    relation = author_link_relation('2005')
-    matrices = incidence_matrices(relation)
+    samples = sample_comments(name)
+    lemmatized = lemmatize(samples, nlp)
+    save_lemmatized(lemmatized, name)
+    
+    relation = author_link_relation(name)
+    incidence = incidence_matrices(relation)
+    save_incidence(incidence, name)
