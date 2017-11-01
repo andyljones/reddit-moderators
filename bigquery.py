@@ -17,7 +17,6 @@
 """
 
 import pandas as pd
-import uuid
 from google.cloud import bigquery
 
 PROJECT = 'reddit-network'
@@ -37,25 +36,24 @@ def comments_table(name='2005'):
     return client().dataset('reddit_comments').table('all')
 
 def query(table, subreddit, limit=100, name='default', max_bytes=1e9):
-    params = (bigquery.ScalarQueryParameter('subreddit', 'STRING', subreddit),
-              bigquery.ScalarQueryParameter('lim', 'INT64', limit))
+    config = bigquery.QueryJobConfig()
+    config.query_parameters = (bigquery.ScalarQueryParameter('subreddit', 'STRING', subreddit),
+                               bigquery.ScalarQueryParameter('lim', 'INT64', limit))
+    config.use_legacy_sql = False
+    config.maximum_bytes_billed = int(max_bytes)
     
-    job = client().run_async_query(
-                job_name='{}-{}'.format(name, str(uuid.uuid4())),
+    job = client().query(
                 query=QUERY.format(table),
-                query_parameters=params)
-    job.use_legacy_sql = False
-    job.maximum_bytes_billed = int(max_bytes)
+                job_config=config,
+                job_id_prefix=name)
     
-    job.begin()
-    job.result()
-    
-    job.destination.reload()
-    columns = [c.name for c in job.destination.schema]
+    iterator = job.result()
+
     rows = []
-    for row in job.destination.fetch_data():
-        rows.append(row)
+    for row in iterator:
+        rows.append(row.values())
         
+    columns = [c.name for c in iterator.schema]
     result = pd.DataFrame(rows, None, columns)
     
     return result
