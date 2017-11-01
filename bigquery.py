@@ -34,7 +34,8 @@ def client():
 def comments_table(name='2005'):
     return client().dataset('reddit_comments').table('all')
 
-def job(query, config, max_bytes=1e9):
+def job(query, config=None, max_bytes=1e9):
+    config = config or bigquery.QueryJobConfig()
     config.use_legacy_sql = False
     config.maximum_bytes_billed = int(max_bytes)
     
@@ -75,6 +76,14 @@ def sample_comments(table, size=10, **kwargs):
     
     return samples
 
+def author_link_relation(table, **kwargs):
+    query = """select distinct subreddit, author, link_id
+               from `fh-bigquery.reddit_comments.{}`""".format(table)
+    
+    result = job(query, **kwargs)
+    
+    return result
+
 def lemmatize(samples, nlp):
     #TODO: This could be sped up with nlp.pipe
     strings = samples.body.add(' | ').groupby(level=0).sum()
@@ -91,8 +100,20 @@ def lemmatize(samples, nlp):
     
     return strings.index.tolist(), indicators
     
+def incidence_matrix(relation):
+    #TODO: This is really slow and memory heavy. Needs to return a sparse matrix instead.
+    # Could also be sped up with the hashing trick
+    return (relation
+                .assign(dummy=lambda df: 1)
+                .groupby(['subreddit', 'link_id', 'author']).dummy.count()
+                .unstack()
+                .fillna(0))
+
 def example():
     nlp = spacy.load('en')
     
-    samples = sample_comments('2009')
+    samples = sample_comments('2005')
     subreddits, indicators = lemmatize(samples, nlp)
+    
+    relation = author_link_relation('2005')
+    matrix = incidence_matrix(relation)
