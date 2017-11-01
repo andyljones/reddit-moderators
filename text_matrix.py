@@ -12,15 +12,12 @@ Created on Thu Jan 19 18:01:01 2017
 
 @author: emg
 """
-# using code from http://brandonrose.org/clustering
-import numpy as np
 import pandas as pd
 import nltk
 import re
-from sklearn import feature_extraction, externals, cluster, metrics, manifold
 from bigquery import *
 
-ex = example()
+#ex = example()
 
 comments = [comment for comment in ex['body'] if comment != '[deleted]']
 
@@ -57,3 +54,18 @@ def stem_comment_matrix():
 
 m = stem_comment_matrix()
 m.head()
+
+
+# looking at comment / parent post relationship
+ex['p1'], ex['p2'] = list(zip(*ex.parent_id.str.split('_')))
+ex.p1.value_counts() # 68 top comments, 32 non-top
+
+## t1 - comment, t3 - link
+## comment ids also start w/ c
+## top comment ex['parent_id'] == ex['link_id']
+
+sibling_counts = ex.groupby('parent_id').count()['body']
+sibling_counts.sort_values(ascending=False)
+
+heir_counts = ex.groupby('link_id').count()['body']
+sibling_counts.sort_values(ascending=False)

@@ -1,31 +1,35 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
- - Install the bigquery library with "pip install google-cloud-bigquery"
+  - Install the bigquery library with "pip install google-cloud-bigquery"
 
-SETUP REFERENCES
  - Go to the Google Cloud console: https://console.cloud.google.com
  - Create a project ('reddit-network' or whatever)
- - Create service account credentials (compute engine) with read privileges: https://console.cloud.google.com/apis/credentials
+ - Create service account credentials with read privileges: https://console.cloud.google.com/apis/credentials
  - Download the credentials to the local dir and point the CREDENTIALS variable at them
  - Add the 'BigQuery Job User' role to the service account: https://console.cloud.google.com/iam-admin/iam
  
-CODE REFERENCES 
  - BigQuery Python API: https://googlecloudplatform.github.io/google-cloud-python/latest/bigquery/usage.html#tables
  - BigQuery API: https://cloud.google.com/bigquery/docs/tables
  - SQL docs: https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax
  - Parameterized query docs: https://cloud.google.com/bigquery/docs/parameterized-queries
  - Reddit table schema: https://bigquery.cloud.google.com/table/fh-bigquery:reddit_comments.all
+
+ - Install spacy
+ - Download the english model: `python -m spacy download en`
 """
 
+import scipy as sp
+import spacy
 import pandas as pd
+from tqdm import tqdm
 from google.cloud import bigquery
 
 PROJECT = 'reddit-network-184710' #unique project id not name
 CREDENTIALS = 'reddit-network-774059619c28.json'
 
 QUERY = """
-select  body, author, created_utc, parent_id, subreddit, score
+select  body, author, created_utc, id, link_id, parent_id, subreddit, score
 from `fh-bigquery.reddit_comments.{}`
 where (subreddit = @subreddit)
 limit @lim
@@ -62,3 +66,6 @@ def query(table, subreddit, limit=100, name='default', max_bytes=1e9):
 
 def example():
     return query('2005', 'reddit.com')
+
+ex = example()
+
