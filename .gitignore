@@ -1,4 +1,6 @@
-credentials.json
+*.ini
+*.json
 *.txt
 *.pkl
 *.pyc
+*.txt
