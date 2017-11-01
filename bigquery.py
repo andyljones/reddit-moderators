@@ -24,6 +24,9 @@ import spacy
 import pandas as pd
 from tqdm import tqdm
 from google.cloud import bigquery
+from logging import getLogger
+from concurrent.futures import TimeoutError
+import time
 
 PROJECT = 'reddit-network'
 CREDENTIALS = 'reddit-network-f00ede7e73d0.json'
@@ -39,11 +42,27 @@ def job(query, config=None, max_bytes=1e9):
     config.use_legacy_sql = False
     config.maximum_bytes_billed = int(max_bytes)
     
-    job = client().query(query=query, job_config=config)
-    iterator = job.result()
+    print('Submitting query')
+    j = client().query(query=query, job_config=config)
+    with tqdm() as pbar:
+        while True:
+            try:
+                j.result(timeout=1)
+            except TimeoutError:                
+                pbar.update(1)
+            else:
+                break
+            
+    return j
 
+def unpack(j):
+    print('Unpacking results')
+    
+    total = j.query_results().total_rows
+    
+    iterator = j.result()
     rows = []
-    for row in iterator:
+    for row in tqdm(iterator, total=total):
         rows.append(row.values())
         
     columns = [c.name for c in iterator.schema]
@@ -59,7 +78,7 @@ def all_comments(table, subreddit, **kwargs):
     config = bigquery.QueryJobConfig()
     config.query_parameters = (bigquery.ScalarQueryParameter('subreddit', 'STRING', subreddit))
     
-    return job(query, config, **kwargs)
+    return unpack(job(query, config, **kwargs))
 
 def sample_comments(table, size=10, **kwargs):
     query = """select subreddit, array_agg(struct(body, id) order by rand() desc limit @size) as agg
@@ -69,7 +88,7 @@ def sample_comments(table, size=10, **kwargs):
     config = bigquery.QueryJobConfig()
     config.query_parameters = (bigquery.ScalarQueryParameter('size', 'INT64', size),)
     
-    result = job(query, config, **kwargs)
+    result = unpack(job(query, config, **kwargs))
     
     # This could definitely be done faster :/
     samples = pd.concat(result.set_index('subreddit')['agg'].apply(pd.DataFrame).to_dict())
@@ -77,12 +96,12 @@ def sample_comments(table, size=10, **kwargs):
     return samples
 
 def author_link_relation(table, **kwargs):
-    query = """select distinct subreddit, author, link_id
-               from `fh-bigquery.reddit_comments.{}`""".format(table)
+    query = """select subreddit, author, array_agg(link_id) as link_ids
+               from `fh-bigquery.reddit_comments.{}`
+               group by subreddit, author
+               order by subreddit, author""".format(table)
     
-    result = job(query, **kwargs)
-    
-    return result
+    return unpack(job(query, **kwargs))
 
 def lemmatize(samples, nlp):
     #TODO: This could be sped up with nlp.pipe
@@ -100,14 +119,29 @@ def lemmatize(samples, nlp):
     
     return strings.index.tolist(), indicators
     
-def incidence_matrix(relation):
-    #TODO: This is really slow and memory heavy. Needs to return a sparse matrix instead.
-    # Could also be sped up with the hashing trick
-    return (relation
-                .assign(dummy=lambda df: 1)
-                .groupby(['subreddit', 'link_id', 'author']).dummy.count()
-                .unstack()
-                .fillna(0))
+def incidence_matrices(relation):
+    results = {}
+    with tqdm(total=len(relation)) as pbar:
+        for i, (subreddit, group) in enumerate(relation.groupby('subreddit')):
+            links = sp.array(sorted(sp.concatenate(group.link_ids.tolist())))
+            authors = sp.array(sorted(group.author))
+        
+            rs, cs = [], []
+            for _, row in group.iterrows():
+                r = sp.searchsorted(authors, row.author)
+                c = sp.searchsorted(links, row.link_ids)
+                
+                rs.append(sp.full_like(c, r))
+                cs.append(c)
+            rs, cs = sp.concatenate(rs), sp.concatenate(cs)
+            vals = sp.ones_like(rs)
+            
+            incidence = sp.sparse.csr_matrix((vals, (rs, cs)), (len(authors), len(links))) 
+            results[subreddit] = {'incidence': incidence, 'authors': authors, 'links': links}
+            
+            pbar.update(len(group))
+        
+    return results
 
 def example():
     nlp = spacy.load('en')
@@ -116,4 +150,4 @@ def example():
     subreddits, indicators = lemmatize(samples, nlp)
     
     relation = author_link_relation('2005')
-    matrix = incidence_matrix(relation)
+    matrices = incidence_matrices(relation)
